@@ -1,0 +1,84 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+    function isAdmin() {
+      return isAuthenticated() &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['admin', 'editor'];
+    }
+    function isValidArticle() {
+      return request.resource.data.title is string
+        && request.resource.data.title.size() >= 5
+        && request.resource.data.title.size() <= 200
+        && request.resource.data.content is string
+        && request.resource.data.content.size() >= 100
+        && request.resource.data.content.size() <= 100000
+        && request.resource.data.excerpt is string
+        && request.resource.data.excerpt.size() >= 10
+        && request.resource.data.excerpt.size() <= 500
+        && request.resource.data.categories is list
+        && request.resource.data.categories.size() > 0
+        && request.resource.data.status in ['draft', 'published', 'archived'];
+    }
+    function isValidComment() {
+      return request.resource.data.authorName is string
+        && request.resource.data.authorName.size() >= 1
+        && request.resource.data.authorName.size() <= 100
+        && request.resource.data.authorEmail is string
+        && request.resource.data.authorEmail.size() >= 5
+        && request.resource.data.authorEmail.size() <= 200
+        && request.resource.data.content is string
+        && request.resource.data.content.size() >= 5
+        && request.resource.data.content.size() <= 5000;
+    }
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow create: if isOwner(userId)
+        && request.resource.data.role == 'reader'
+        && request.resource.data.bookmarks == []
+        && request.resource.data.createdAt == request.time;
+      allow update: if isOwner(userId)
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['role']) || isAdmin());
+      allow delete: if isOwner(userId) || isAdmin();
+    }
+    match /articles/{articleId} {
+      allow read: if resource.data.status == 'published' || isAdmin();
+      allow create: if isAdmin() && isValidArticle();
+      allow update: if isAdmin() && isValidArticle();
+      allow delete: if isAdmin();
+    }
+    match /comments/{commentId} {
+      allow read: if resource.data.status == 'approved' || isAdmin();
+      allow create: if isValidComment()
+        && request.resource.data.status == 'pending'
+        && request.resource.data.createdAt == request.time;
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+    match /likes/{likeId} {
+      allow read: if true;
+      allow create: if isAuthenticated()
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.articleId != null;
+      allow delete: if isAuthenticated()
+        && resource.data.userId == request.auth.uid;
+    }
+    match /subscribers/{subscriberId} {
+      allow read: if isAdmin();
+      allow create: if request.resource.data.email is string
+        && request.resource.data.status == 'active'
+        && request.resource.data.subscribedAt == request.time;
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+    match /analytics/{docId} {
+      allow read: if isAdmin();
+      allow write: if false;
+    }
+  }
+}
